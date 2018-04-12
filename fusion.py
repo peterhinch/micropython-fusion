@@ -16,7 +16,6 @@
 
 import time
 from math import sqrt, atan2, asin, degrees, radians
-from deltat import DeltaT
 
 # Default time difference function. This is correct if the target is a MicroPython device.
 def TimeDiff(start, end):
@@ -28,9 +27,10 @@ class Fusion(object):
     The update method must be called peiodically. The calculations take 1.6mS on the Pyboard.
     '''
     declination = 0                         # Optional offset for true north. A +ve value adds to heading
-    def __init__(self, expect_ts=False,timediff=TimeDiff):
+    def __init__(self, timediff=TimeDiff):
         self.magbias = (0, 0, 0)            # local magnetic bias factors: set from calibration
-        self.deltat = DeltaT(expect_ts,timediff)     # Time between updates
+        self.timediff = timediff            # Time differencing/scaling function
+        self.start_time = None              # Time between updates
         self.q = [1.0, 0.0, 0.0, 0.0]       # vector to hold quaternion
         GyroMeasError = radians(40)         # Original code indicates this leads to a 2 sec response time
         self.beta = sqrt(3.0 / 4.0) * GyroMeasError  # compute beta (see README)
@@ -56,7 +56,8 @@ class Fusion(object):
     def update_nomag(self, accel, gyro, ts=None):    # 3-tuples (x, y, z) for accel, gyro
         ax, ay, az = accel                  # Units G (but later normalised)
         gx, gy, gz = (radians(x) for x in gyro) # Units deg/s
-        self.deltat.ensure_ready(ts)
+        if self.start_time is None:  # First run
+            self.start_time = time.ticks_us() if ts is None else ts
         q1, q2, q3, q4 = (self.q[x] for x in range(4))   # short name local variable for readability
         # Auxiliary variables to avoid repeated arithmetic
         _2q1 = 2 * q1
@@ -100,7 +101,9 @@ class Fusion(object):
         qDot4 = 0.5 * (q1 * gz + q2 * gy - q3 * gx) - self.beta * s4
 
         # Integrate to yield quaternion
-        deltat = self.deltat(ts)
+        tnow = time.ticks_us() if ts is None else ts
+        deltat = self.timediff(tnow, self.start_time)
+        self.start_time = tnow
         q1 += qDot1 * deltat
         q2 += qDot2 * deltat
         q3 += qDot3 * deltat
@@ -116,7 +119,8 @@ class Fusion(object):
         mx, my, mz = (mag[x] - self.magbias[x] for x in range(3)) # Units irrelevant (normalised)
         ax, ay, az = accel                  # Units irrelevant (normalised)
         gx, gy, gz = (radians(x) for x in gyro)  # Units deg/s
-        self.deltat.ensure_ready(ts)
+        if self.start_time is None:  # First run
+            self.start_time = time.ticks_us() if ts is None else ts
         q1, q2, q3, q4 = (self.q[x] for x in range(4))   # short name local variable for readability
         # Auxiliary variables to avoid repeated arithmetic
         _2q1 = 2 * q1
@@ -197,7 +201,10 @@ class Fusion(object):
         qDot4 = 0.5 * (q1 * gz + q2 * gy - q3 * gx) - self.beta * s4
 
         # Integrate to yield quaternion
-        deltat = self.deltat(ts)
+        tnow = time.ticks_us() if ts is None else ts
+        deltat = self.timediff(tnow, self.start_time)
+        self.start_time = tnow
+
         q1 += qDot1 * deltat
         q2 += qDot2 * deltat
         q3 += qDot3 * deltat
